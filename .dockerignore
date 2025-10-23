@@ -1,3 +1,8 @@
-node_modules
-dist
-.next
+# Python
+__pycache__
+app.egg-info
+*.pyc
+.mypy_cache
+.coverage
+htmlcov
+.venv
