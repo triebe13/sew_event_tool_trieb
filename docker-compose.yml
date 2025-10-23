@@ -1,0 +1,169 @@
+version: "1.1"
+services:
+  traefik:
+    image: traefik:3.0
+    container_name: traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+      - "8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: always
+
+  db:
+    image: postgres:17
+    container_name: db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - app-db-data:/var/lib/postgresql/data
+    restart: always
+
+
+  adminer:
+    image: adminer:5
+    container_name: adminer
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.constraint-label=traefik-public
+      - traefik.http.routers.adminer.rule=PathPrefix(`/adminer`)
+      - traefik.http.routers.adminer.entrypoints=web
+      - traefik.http.services.adminer.loadbalancer.server.port=8080
+    restart: always
+
+  backend:
+    container_name: backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - db
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./backend/scripts:/app/scripts
+      - ./backend/alembic:/app/alembic
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.backend.rule=PathPrefix(`/api`)
+      - traefik.http.routers.backend.entrypoints=web
+      - traefik.http.middlewares.backend-stripprefix.stripprefix.prefixes=/api
+      - traefik.http.routers.backend.middlewares=backend-stripprefix
+      - traefik.http.services.backend.loadbalancer.server.port=8000
+    restart: unless-stopped
+
+  frontend:
+    container_name: frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_BASE_PATH=/frontend
+      - CI=true
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/app:/app/app
+      - frontend_node_modules:/app/node_modules:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frontend.rule=PathPrefix(`/frontend`)
+      - traefik.http.routers.frontend.entrypoints=web
+      - traefik.http.services.frontend.loadbalancer.server.port=3000
+      # Dev overlay fonts and Next.js internals
+      - traefik.http.routers.web-assets.rule=PathPrefix(`/__nextjs_font`) || PathPrefix(`/_next`)
+      - traefik.http.routers.web-assets.entrypoints=web
+      - traefik.http.routers.web-assets.service=web
+      - traefik.http.routers.web-assets.priority=5
+
+    restart: unless-stopped
+
+  migrations:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: bash scripts/prestart.sh
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-appdb}
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+
+  code-server:
+    container_name: code
+    build:
+      context: ./code-server
+      dockerfile: Dockerfile
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./backend/app:/config/workspace/backend/app
+      - ./backend/app/api/routes/cmd.py:/config/workspace/backend/app/api/routes/cmd.py:ro
+      - ./backend/alembic:/config/workspace/backend/alembic
+      - ./backend/scripts:/config/workspace/backend/scripts
+      - ./backend/tests:/config/workspace/backend/tests
+
+      - ./frontend/app:/config/workspace/frontend/app
+      - ./frontend/components:/config/workspace/frontend/components:ro
+      - frontend_node_modules:/config/workspace/frontend/node_modules:ro
+      - ./frontend/components.json:/config/workspace/frontend/components.json:ro
+      - ./frontend/tsconfig.json:/config/workspace/frontend/tsconfig.json:ro
+      - ./frontend/lib:/config/workspace/frontend/lib:ro
+      
+      # Mount log files from host so code-server can view them
+      - ./logs/backend.log:/config/workspace/logs/backend.log
+      - ./logs/frontend.log:/config/workspace/logs/frontend.log
+
+      #- ./code-server/extensions:/config/extensions # persistence, copy /config/extensions from the container to your host and mount it back
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.code.rule=PathPrefix(`/code`)
+      - traefik.http.routers.code.entrypoints=web
+      - traefik.http.middlewares.code-stripprefix.stripprefix.prefixes=/code
+      - traefik.http.routers.code.middlewares=code-stripprefix
+      - traefik.http.services.code.loadbalancer.server.port=8443
+    restart: unless-stopped
+
+  log-watcher:
+    image: docker:cli
+    container_name: log-watcher
+    command: >
+      sh -c "
+        mkdir -p /logs && touch /logs/backend.log && touch /logs/frontend.log &&
+        (docker logs -f backend > /logs/backend.log 2>&1 &) &&
+        (docker logs -f frontend > /logs/frontend.log 2>&1 &) &&
+        tail -f /dev/null
+      "
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./logs:/logs
+    restart: unless-stopped
+
+volumes:
+  app-db-data:
+  frontend_node_modules:
+

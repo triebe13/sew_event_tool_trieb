@@ -1,0 +1,44 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    #Core Framework 
+    "fastapi[standard]<1.0.0,>=0.114.2",
+    "pydantic>2.0",
+    "pydantic-settings<3.0.0,>=2.2.1",
+
+    #Request Handling & Multipart Support
+    "python-multipart<1.0.0,>=0.0.7",
+
+    #Security & Authentication
+    "passlib[bcrypt]<2.0.0,>=1.7.4",
+    "bcrypt==3.2.0",
+    "pyjwt<3.0.0,>=2.8.0",
+
+    #Database & ORM
+    "sqlalchemy>=2.0.14",
+    "psycopg[binary]<4.0.0,>=3.1.13",
+    "alembic<2.0.0,>=1.12.1",
+
+    #Monitoring & Error Tracking
+    "sentry-sdk[fastapi]<2.0.0,>=1.40.6",
+
+    #Resilience & Retry Logic, Pre-start
+    "tenacity<9.0.0,>=8.2.3",
+
+    #Coverage, Test
+    "coverage==7.10.7",
+    "pytest==8.4.2",
+
+    # Linter script
+    "mypy",
+    "ruff==0.13.3",
+    #
+    #
+    #"jinja2<4.0.0,>=3.1.4",
+    #"httpx<1.0.0,>=0.25.1",
+    #"psycopg2-binary<3.0.0,>=2.9.6",
+
+]
